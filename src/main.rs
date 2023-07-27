@@ -1,3 +1,5 @@
+use terminal_size::{terminal_size, Width};
+
 fn main() {
     // Build the board
     #[rustfmt::skip]
@@ -15,28 +17,20 @@ fn main() {
     let board = Board::new(&str_board);
 
     // Calculate solutions
-    let mut solutions = Vec::new();
+    let mut results = Results::default();
 
-    recurse(board.clone(), Vec::new(), 16, &mut solutions);
+    recurse(board.clone(), Vec::new(), 16, &mut results);
 
     // Print solutions
-    for (i, sol) in solutions.iter().enumerate() {
-        println!("=== Solution {} ===", i + 1);
-
-        let mut board = board.clone();
-
-        for (j, &(row, col)) in sol.iter().enumerate() {
-            println!("--- Move {} ---", j + 1);
-
-            board.move_to(row, col);
-            board.print();
-        }
-    }
+    results.print(&board);
 }
 
-fn recurse(board: Board, moves: Vec<(u8, u8)>, left: u8, solutions: &mut Vec<Vec<(u8, u8)>>) {
+fn recurse(board: Board, moves: Vec<(u8, u8)>, left: u8, results: &mut Results) {
     // Get all possible next moves
     let available_moves = board.next_moves();
+
+    results.games += available_moves.len();
+    results.depth_games[16 - left as usize] += available_moves.len();
 
     // Iterate next moves
     for (row, col) in available_moves {
@@ -50,10 +44,10 @@ fn recurse(board: Board, moves: Vec<(u8, u8)>, left: u8, solutions: &mut Vec<Vec
 
         if left == 1 {
             // Taking the last pawn
-            solutions.push(next_moves);
+            results.solutions.push(next_moves);
         } else {
             // Recurse
-            recurse(next_board, next_moves, left - 1, solutions);
+            recurse(next_board, next_moves, left - 1, results);
         }
     }
 }
@@ -229,7 +223,9 @@ impl Board {
     }
 
     /// Prints the board
-    fn print(&self) {
+    fn to_string(&self) -> Vec<String> {
+        let mut strings = Vec::with_capacity(8);
+
         for row in 0..8 {
             let rowstr: String = (0..8)
                 .map(|col| {
@@ -243,7 +239,96 @@ impl Board {
                 })
                 .collect();
 
-            println!("{rowstr}");
+            strings.push(rowstr);
+        }
+
+        strings
+    }
+}
+
+#[derive(Default)]
+struct Results {
+    solutions: Vec<Vec<(u8, u8)>>,
+    games: usize,
+    depth_games: [usize; 16],
+}
+
+impl Results {
+    /// Print results
+    fn print(&self, start_board: &Board) {
+        // Print stats
+        println!("Total games: {}", self.games);
+        println!("Choices: {:?}", self.depth_games);
+
+        // Get terminal width
+        let term_width = match terminal_size() {
+            Some((Width(w), _)) => w,
+            None => 0,
+        };
+
+        const WIDTH: usize = 10;
+        const HEIGHT: usize = 9;
+
+        // Function to add board to output buffer and print in next will overflow
+        let add_board =
+            |desc: String, board: &Board, rows: &mut Vec<String>, cur_len: &mut usize| {
+                // Increase length
+                *cur_len += WIDTH;
+
+                // Add description
+                rows[0].push_str(&desc);
+
+                // Add board
+                for (i, s) in board.to_string().into_iter().enumerate() {
+                    rows[i + 1].push_str(&s);
+                }
+
+                if *cur_len + WIDTH > term_width as usize {
+                    // Next will overflow - print and clear
+                    for r in rows.iter_mut() {
+                        println!("{r}");
+                        r.clear();
+                    }
+
+                    *cur_len = 0;
+                } else {
+                    // Pad to length
+                    (0..HEIGHT).for_each(|i| {
+                        for _ in rows[i].chars().count()..*cur_len {
+                            rows[i].push(' ')
+                        }
+                    });
+                }
+            };
+
+        for (i, sol) in self.solutions.iter().enumerate() {
+            println!("=== Solution {} ===", i + 1);
+
+            // Create row buffers
+            let mut rows = (0..HEIGHT)
+                .map(|_| String::with_capacity(term_width as usize))
+                .collect::<Vec<String>>();
+
+            let mut cur_len = 0;
+
+            // Get initial board
+            let mut board = start_board.clone();
+
+            // Print it
+            add_board("Initial".to_string(), &board, &mut rows, &mut cur_len);
+
+            // Replay moves and print result board
+            for (j, &(row, col)) in sol.iter().enumerate() {
+                board.move_to(row, col);
+                add_board(format!("Move {}", j + 1), &board, &mut rows, &mut cur_len);
+            }
+
+            // Print remaining row buffers
+            if cur_len > 0 {
+                for r in rows {
+                    println!("{r}");
+                }
+            }
         }
     }
 }
